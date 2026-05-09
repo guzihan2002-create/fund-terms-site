@@ -1,0 +1,1129 @@
+import { useMemo, useState, useEffect } from "react";
+import { initialTerms, categories } from "./data/terms";
+
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll(" ", "")
+    .replaceAll("　", "");
+}
+
+function includesText(value, keyword) {
+  return normalizeText(value).includes(keyword);
+}
+
+function getSearchScore(item, keyword) {
+  if (!keyword) return 1;
+
+  let score = 0;
+  const term = normalizeText(item.term);
+  const en = normalizeText(item.en);
+
+  if (term === keyword) score += 120;
+  else if (term.startsWith(keyword)) score += 90;
+  else if (term.includes(keyword)) score += 70;
+
+  if (en === keyword) score += 80;
+  else if (en.includes(keyword)) score += 45;
+
+  if (item.tags.some((tag) => includesText(tag, keyword))) score += 38;
+  if (includesText(item.category, keyword)) score += 32;
+  if (item.related.some((termName) => includesText(termName, keyword))) score += 35;
+  if (includesText(item.plain, keyword)) score += 20;
+  if (includesText(item.definition, keyword)) score += 18;
+  if (includesText(item.example, keyword)) score += 12;
+  if (includesText(item.mistake, keyword)) score += 10;
+
+  return score;
+}
+
+function getSearchStatus(query, category, level, count) {
+  const parts = [];
+
+  if (query.trim()) parts.push(`搜索：${query.trim()}`);
+  if (category !== "全部") parts.push(`当前分类：${category}`);
+  if (level !== "全部") parts.push(`难度：${level}`);
+
+  const prefix = parts.length > 0 ? parts.join(" · ") : "当前显示全部词条";
+  return `${prefix} · 共 ${count} 个结果`;
+}
+
+function App() {
+  const [terms, setTerms] = useState(initialTerms);
+
+  useEffect(() => {
+    setTerms(initialTerms);
+  }, []);
+
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("全部");
+  const [level, setLevel] = useState("全部");
+  const [selectedTerm, setSelectedTerm] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+
+  const [form, setForm] = useState({
+    term: "",
+    en: "",
+    category: "交易规则",
+    level: "新手",
+    tags: "",
+    definition: "",
+    plain: "",
+    example: "",
+    mistake: "",
+    related: ""
+  });
+
+  const visibleTerms = useMemo(() => {
+    const keyword = normalizeText(query);
+
+    return terms
+      .filter((item) => {
+        const matchCategory = category === "全部" || item.category === category;
+        const matchLevel = level === "全部" || item.level === level;
+
+        if (!matchCategory || !matchLevel) return false;
+        if (!keyword) return true;
+
+        return getSearchScore(item, keyword) > 0;
+      })
+      .map((item) => ({
+        item,
+        score: keyword ? getSearchScore(item, keyword) : 1
+      }))
+      .sort((a, b) => {
+        if (keyword) return b.score - a.score;
+        return a.item.term.localeCompare(b.item.term, "zh-CN");
+      })
+      .map(({ item }) => item);
+  }, [terms, query, category, level]);
+
+  const categoryCounts = useMemo(() => {
+    return categories.slice(1).map((name) => ({
+      name,
+      count: terms.filter((item) => item.category === name).length
+    }));
+  }, [terms]);
+
+  function resetSearch() {
+    setQuery("");
+    setCategory("全部");
+    setLevel("全部");
+  }
+
+  function openRelated(termName) {
+    const found = terms.find((item) => item.term === termName);
+
+    if (found) {
+      setSelectedTerm(found);
+      setQuery(termName);
+      setCategory("全部");
+      setLevel("全部");
+    } else {
+      setSelectedTerm(null);
+      setQuery(termName);
+      setCategory("全部");
+      setLevel("全部");
+    }
+  }
+
+  function saveTerm() {
+    const termName = form.term.trim();
+
+    if (!termName) {
+      alert("请填写中文术语");
+      return;
+    }
+
+    const existed = terms.some((item) => item.term.trim() === termName);
+
+    if (existed) {
+      alert("这个术语已经存在");
+      return;
+    }
+
+    const newTerm = {
+      term: termName,
+      en: form.en.trim() || "Not provided",
+      category: form.category,
+      level: form.level,
+      tags: form.tags.split(/[，,]/).map((x) => x.trim()).filter(Boolean),
+      definition: form.definition.trim() || "暂无专业解释。",
+      plain: form.plain.trim() || "暂无白话理解。",
+      example: form.example.trim() || "暂无例子。",
+      mistake: form.mistake.trim() || "暂无常见误区。",
+      related: form.related.split(/[，,]/).map((x) => x.trim()).filter(Boolean)
+    };
+
+    setTerms((current) => [newTerm, ...current]);
+
+    setForm({
+      term: "",
+      en: "",
+      category: "交易规则",
+      level: "新手",
+      tags: "",
+      definition: "",
+      plain: "",
+      example: "",
+      mistake: "",
+      related: ""
+    });
+
+    setShowForm(false);
+  }
+
+  return (
+    <div className="page">
+      <style>{styles}</style>
+
+      <header className="header">
+        <div className="headerContent">
+          <div className="eyebrow">中国大陆基金术语库</div>
+          <h1>基金交易与收益计算术语检索</h1>
+          <p className="subtitle">
+            一个用于查询中国大陆基金交易规则、交易术语、费用成本和收益计算概念的术语库。
+          </p>
+
+          <button className="primaryButton headerButton" onClick={() => setShowForm(!showForm)}>
+            {showForm ? "收起表单" : "新增词条"}
+          </button>
+        </div>
+      </header>
+
+      <main className="main">
+        <section className="statsGrid">
+          <Stat label="语料总数" value={terms.length} helper="完整术语库" />
+          <Stat label="当前结果" value={visibleTerms.length} helper="按筛选更新" />
+          <Stat label="分类数量" value={categories.length - 1} helper="按主题整理" />
+        </section>
+
+        <section className="searchPanel">
+          <div className="searchGrid">
+            <div className="searchBox">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索术语，例如：赎回到账、收益率计算、分红"
+              />
+
+              {query && (
+                <button onClick={() => setQuery("")} className="clearButton">
+                  清除
+                </button>
+              )}
+            </div>
+
+            <label className="filterField">
+              <span>分类</span>
+              <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                {categories.map((item) => (
+                  <option key={item} value={item}>
+                    {item === "全部" ? "全部分类" : item}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="filterField">
+              <span>难度</span>
+              <select value={level} onChange={(e) => setLevel(e.target.value)}>
+                {["全部", "新手", "进阶"].map((item) => (
+                  <option key={item} value={item}>
+                    {item === "全部" ? "全部难度" : item}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="searchMeta">
+            <span>{getSearchStatus(query, category, level, visibleTerms.length)}</span>
+
+            {(query || category !== "全部" || level !== "全部") && (
+              <button onClick={resetSearch}>清除筛选</button>
+            )}
+          </div>
+        </section>
+
+        {showForm && (
+          <section className="formPanel">
+            <h2>手动新增词条</h2>
+            <p>新增内容只会保存在当前页面状态中。刷新后会恢复到 terms.js 的完整词库。</p>
+
+            <div className="formGrid">
+              <Input label="中文术语" value={form.term} onChange={(v) => setForm({ ...form, term: v })} />
+              <Input label="英文名" value={form.en} onChange={(v) => setForm({ ...form, en: v })} />
+
+              <Select
+                label="一级分类"
+                value={form.category}
+                options={categories.slice(1)}
+                onChange={(v) => setForm({ ...form, category: v })}
+              />
+
+              <Select
+                label="难度"
+                value={form.level}
+                options={["新手", "进阶"]}
+                onChange={(v) => setForm({ ...form, level: v })}
+              />
+
+              <Input label="标签，用逗号分隔" value={form.tags} onChange={(v) => setForm({ ...form, tags: v })} />
+              <Input label="相关术语，用逗号分隔" value={form.related} onChange={(v) => setForm({ ...form, related: v })} />
+
+              <Textarea label="专业解释" value={form.definition} onChange={(v) => setForm({ ...form, definition: v })} />
+              <Textarea label="白话理解" value={form.plain} onChange={(v) => setForm({ ...form, plain: v })} />
+              <Textarea label="例子" value={form.example} onChange={(v) => setForm({ ...form, example: v })} />
+              <Textarea label="常见误区" value={form.mistake} onChange={(v) => setForm({ ...form, mistake: v })} />
+            </div>
+
+            <button className="primaryButton" onClick={saveTerm}>
+              保存词条
+            </button>
+          </section>
+        )}
+
+        <section className="contentLayout">
+          <aside className="sidebar">
+            <h2>分类概览</h2>
+
+            <div className="categoryList">
+              <button
+                className={category === "全部" ? "active" : ""}
+                onClick={() => {
+                  setCategory("全部");
+                  setQuery("");
+                  setLevel("全部");
+                }}
+              >
+                <span>全部</span>
+                <span>{terms.length}</span>
+              </button>
+
+              {categoryCounts.map((item) => (
+                <button
+                  key={item.name}
+                  className={category === item.name ? "active" : ""}
+                  onClick={() => {
+                    setCategory(item.name);
+                    setQuery("");
+                    setLevel("全部");
+                  }}
+                >
+                  <span>{item.name}</span>
+                  <span>{item.count}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="cardsGrid">
+            {visibleTerms.length > 0 ? (
+              visibleTerms.map((item) => (
+                <button
+                  key={`${item.category}-${item.term}`}
+                  className="termCard"
+                  onClick={() => setSelectedTerm(item)}
+                >
+                  <div className="cardTop">
+                    <div>
+                      <h3>{item.term}</h3>
+                      <p>{item.en}</p>
+                    </div>
+
+                    <div className={`levelBadge ${item.level === "进阶" ? "advanced" : "beginner"}`}>
+                      {item.level}
+                    </div>
+                  </div>
+
+                  <p className="cardPlain">{item.plain}</p>
+
+                  <div className="tagRow">
+                    <span className="categoryTag">{item.category}</span>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="empty">
+                <h2>没有找到匹配词条</h2>
+                <p>可以换一个关键词，或手动新增这个词条。</p>
+                <button className="primaryButton" onClick={() => setShowForm(true)}>
+                  添加词条
+                </button>
+              </div>
+            )}
+          </section>
+        </section>
+      </main>
+
+      {selectedTerm && (
+        <div className="modalBackdrop" onClick={() => setSelectedTerm(null)}>
+          <section className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader">
+              <div className="modalTitleGroup">
+                <p>{selectedTerm.category}</p>
+                <h2>{selectedTerm.term}</h2>
+                <span>{selectedTerm.en}</span>
+              </div>
+
+              <button
+  className="modalCloseButton"
+  onClick={() => setSelectedTerm(null)}
+  aria-label="关闭详情"
+  type="button"
+>
+  ×
+</button>
+            </div>
+
+            <div className="modalBody">
+              <Detail title="专业解释" content={selectedTerm.definition} highlight />
+              <Detail title="白话理解" content={selectedTerm.plain} />
+              <Detail title="使用例子" content={selectedTerm.example} />
+              <Detail title="常见误区" content={selectedTerm.mistake} />
+
+              <div className="relatedBlock">
+                <h3>相关术语</h3>
+
+                <div className="relatedRow">
+                  {selectedTerm.related.length > 0 ? (
+                    selectedTerm.related.map((item) => (
+                      <button key={item} type="button" onClick={() => openRelated(item)}>
+                        {item}
+                      </button>
+                    ))
+                  ) : (
+                    <span>暂无相关术语</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, helper }) {
+  return (
+    <div className="statCard">
+      <p>{label}</p>
+      <strong>{value}</strong>
+      <span>{helper}</span>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((item) => (
+          <option key={item} value={item}>
+            {item}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function Textarea({ label, value, onChange }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows="4" />
+    </label>
+  );
+}
+
+function Detail({ title, content, highlight }) {
+  return (
+    <section className={highlight ? "detailBlock highlight" : "detailBlock"}>
+      <h3>{title}</h3>
+      <p>{content}</p>
+    </section>
+  );
+}
+
+const styles = `
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #ffffff;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.page {
+  min-height: 100vh;
+  background: #ffffff;
+}
+
+.header {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 48px 20px 36px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: center;
+}
+
+.headerContent {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.eyebrow {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+h1 {
+  margin: 18px 0 0;
+  font-size: 44px;
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+
+.subtitle {
+  max-width: 760px;
+  margin: 18px auto 0;
+  color: #64748b;
+  line-height: 1.8;
+}
+
+.main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 20px 56px;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.statCard,
+.searchPanel,
+.formPanel,
+.sidebar,
+.termCard,
+.empty {
+  border: 1px solid #e2e8f0;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+.statCard {
+  padding: 20px;
+}
+
+.statCard p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.statCard strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.statCard span {
+  display: block;
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.searchPanel {
+  margin-top: 20px;
+  padding: 16px;
+}
+
+.searchGrid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr;
+  gap: 12px;
+}
+
+.searchBox {
+  position: relative;
+}
+
+.searchBox input,
+.searchGrid select,
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #f8fafc;
+  color: #0f172a;
+  outline: none;
+  transition: 0.2s;
+}
+
+.filterField {
+  position: relative;
+  display: block;
+}
+
+.filterField span {
+  position: absolute;
+  left: 16px;
+  top: 7px;
+  z-index: 1;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.searchBox input,
+.field input,
+.field select {
+  height: 58px;
+  padding: 0 14px;
+}
+
+.searchGrid select {
+  height: 58px;
+}
+
+.filterField select {
+  padding: 24px 14px 6px 14px;
+  line-height: 1.2;
+}
+
+.field textarea {
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.searchBox input:focus,
+.searchGrid select:focus,
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: #94a3b8;
+  background: #ffffff;
+}
+
+.clearButton {
+  position: absolute;
+  right: 8px;
+  top: 14px;
+  height: 30px;
+  border: none;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.searchMeta {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f1f5f9;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.searchMeta button {
+  border: none;
+  background: none;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.relatedRow button {
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  padding: 8px 13px;
+  line-height: 1.2;
+  transition: 0.2s;
+}
+
+.relatedRow button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.formPanel {
+  margin-top: 20px;
+  padding: 24px;
+}
+
+.formPanel h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.formPanel p {
+  margin: 8px 0 20px;
+  color: #64748b;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.field span {
+  display: block;
+  margin-bottom: 8px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.primaryButton {
+  height: 46px;
+  border: none;
+  border-radius: 18px;
+  background: #0f172a;
+  color: #ffffff;
+  padding: 0 18px;
+  font-weight: 600;
+  transition: 0.2s;
+}
+
+.primaryButton:hover {
+  background: #1e293b;
+}
+
+.headerButton {
+  margin-top: 26px;
+}
+
+.formPanel .primaryButton {
+  margin-top: 20px;
+}
+
+.contentLayout {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 20px;
+}
+
+.sidebar {
+  height: fit-content;
+  padding: 16px;
+  position: sticky;
+  top: 20px;
+}
+
+.sidebar h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.categoryList {
+  display: grid;
+  gap: 6px;
+}
+
+.categoryList button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: none;
+  border-radius: 16px;
+  background: transparent;
+  color: #64748b;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.categoryList button.active {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.cardsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+.termCard {
+  width: 100%;
+  min-height: 188px;
+  padding: 22px;
+  text-align: left;
+  transition: 0.2s;
+  display: flex;
+  flex-direction: column;
+}
+
+.termCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+}
+
+.cardTop {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.cardTop h3 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.22;
+  letter-spacing: -0.02em;
+}
+
+.cardTop p {
+  margin: 7px 0 0;
+  color: #64748b;
+  font-size: 15px;
+  line-height: 1.35;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.levelBadge {
+  align-self: start;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.levelBadge.beginner {
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.levelBadge.advanced {
+  background: #eef2ff;
+  color: #475569;
+  border: 1px solid #dbe4ff;
+}
+
+.cardPlain {
+  margin: 14px 0 0;
+  color: #475569;
+  line-height: 1.55;
+  font-size: 15px;
+}
+
+.tagRow {
+  margin-top: auto;
+  padding-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tagRow span {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  padding: 5px 11px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.tagRow .categoryTag {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.empty {
+  grid-column: 1 / -1;
+  padding: 40px;
+  text-align: center;
+}
+
+.empty h2 {
+  margin: 0;
+}
+
+.empty p {
+  color: #64748b;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.24);
+  backdrop-filter: blur(4px);
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  z-index: 100;
+}
+
+.modal {
+  width: 100%;
+  max-width: 760px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+
+.modalHeader {
+  position: sticky;
+  top: 0;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 30px 40px 24px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: start;
+  text-align: left;
+}
+
+.modalTitleGroup {
+  text-align: left;
+}
+
+.modalHeader p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  text-align: left;
+}
+
+.modalHeader h2 {
+  margin: 8px 0 6px;
+  font-size: 32px;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+  text-align: left;
+}
+
+.modalHeader span {
+  display: block;
+  color: #64748b;
+  text-align: left;
+}
+
+.modalCloseButton {
+  width: 44px;
+  height: 44px;
+  align-self: flex-start;
+  border: none;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #0f172a;
+  font-size: 30px;
+  font-weight: 300;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0 0 3px;
+  transition: 0.2s;
+}
+
+.modalCloseButton:hover {
+  background: #e2e8f0;
+}
+
+.modalBody {
+  padding: 28px 40px 38px;
+  display: grid;
+  gap: 22px;
+}
+
+.detailBlock {
+  width: 100%;
+  max-width: 660px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.detailBlock.highlight {
+  background: #f8fafc;
+  border-radius: 22px;
+  padding: 22px 24px;
+}
+
+.detailBlock h3,
+.modalBody h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #0f172a;
+  text-align: left;
+}
+
+.detailBlock p {
+  margin: 10px 0 0;
+  color: #475569;
+  line-height: 1.75;
+  font-size: 16px;
+  text-align: left;
+}
+
+.relatedBlock {
+  width: 100%;
+  max-width: 660px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.relatedRow {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+@media (max-width: 900px) {
+  h1 {
+    font-size: 34px;
+  }
+
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .searchGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .contentLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+  }
+
+  .categoryList {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 4px;
+  }
+
+  .categoryList button {
+    min-width: max-content;
+    gap: 12px;
+  }
+
+  .cardsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  .header,
+  .main {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  h1 {
+    font-size: 30px;
+  }
+
+  .statsGrid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .statCard {
+    padding: 16px;
+  }
+
+  .statCard strong {
+    font-size: 20px;
+  }
+
+  .cardsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .searchMeta {
+    flex-direction: column;
+  }
+
+  .modalBackdrop {
+    padding: 10px;
+  }
+
+  .modalHeader {
+    padding: 22px 20px 20px;
+    text-align: left;
+  }
+
+  .modalHeader h2 {
+    font-size: 28px;
+    text-align: left;
+  }
+
+  .modalBody {
+    padding: 22px 20px 28px;
+  }
+
+  .detailBlock,
+  .relatedBlock {
+    max-width: 100%;
+  }
+}
+`;
+export default App;
